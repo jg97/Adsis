@@ -1,0 +1,168 @@
+#!/usr/bin/env ruby
+
+require 'net/ping'
+require 'rubygems'
+require 'net/ssh'
+require 'net/scp'
+
+def up?(chost)
+    check = Net::Ping::TCP.new(chost, 22, 0.1)
+	check.ping?
+end
+
+def s(host, command, i)
+     n = i.to_s
+     puts host
+     puts command
+     if up?(host)
+        Net::SSH.start( host, 'a715821') do|ssh|
+         	result = ssh.exec!(command)
+         	puts "máquina"+ n +": exito"
+        	puts result
+        end
+     end
+end
+
+def p(host, i)
+    puts host
+    n = i.to_s
+    if up?(host) == true
+        puts "máquina_ " + n + " : FUNCIONA"
+    else
+        puts "máquina_" + n + " : falla"
+    end
+end
+
+def c(host, files, i)
+    n = i.to_s
+    puts files
+    files.each do |file|
+    	if File.file?("/home/a715821/.u/manifiestos/"+file) == true
+			if up?(host)
+				puts "Esta operativo"
+                Net::SSH.start(host, 'a715821') do|ssh|
+                 ssh.exec!("mkdir /tmp/.ruby/")
+                 path = "/home/a715821/.u/manifiestos/" + file
+                 Net::SCP.start(host, "a715821") do |scp|
+                    scp.upload! path , "/tmp/.ruby/"
+                 end
+                 command = "doas puppet apply /tmp/.ruby/" + file
+                 result = ssh.exec!(command)
+                 puts "máquina"+ n +": exito"
+                 puts result
+                 ssh.exec!("rm -rf /tmp/.ruby")
+                end
+            end
+        end
+    end
+end
+
+def ejecutar(opcion, host, i, command)
+    if opcion == 'p'
+        p(host, i)
+    elsif opcion == 's'
+        s(host, command, i)
+    else
+        c(host, command, i)
+    end
+end
+
+def todo(f, opcion, command)
+    i = 0
+    f.each_line do |host|
+		host = host.chomp
+        if host[0] != '+' and host[0] != '-' and host.strip() != ''
+            i = i + 1
+            ejecutar(opcion, host, i, command)
+        end
+    end
+    f.close
+end
+
+def buscar(f, maq, opcion, command)
+    i = 0
+    encontrado = 0
+    f.each_line do |host|
+        host = host.chomp
+        if encontrado == 1
+            if host[0] != '-' and host[0] != '+' and host.strip() != ''
+                i = i + 1
+                ejecutar(opcion, host, i, command)
+            else
+                if host[0] == '+'
+                    host[0] = ''
+                    buscar(File.open("/home/a715821/.u/hosts", "r"), host, opcion, command)
+                else
+                    encontrado = 0
+                end
+            end
+        end
+        if host[0] == '-'
+            host[0]=''
+            if maq == host
+                encontrado = 1
+            end
+        else
+            if host == maq
+                ejecutar(opcion, host, i+1, command)
+            end
+        end
+    end
+end
+
+def procesar (maq, opcion, command)
+    if File.file?("/home/a715821/.u/hosts") == true
+        f = File.open("/home/a715821/.u/hosts", "r")
+        if maq == ''
+            todo(f, opcion, command)
+        else
+            buscar(f, maq, opcion, command)
+        end
+    else
+        puts "El fichero ~/.u/hosts no existe"
+    end
+end
+
+def despliegue ()
+	odefecto = "2001:470:736b:6ff::6"
+	defecto = "2001:470:736b:6ff::7"
+	router_exterior = "2001:470:736b:620::2"
+	ipa1 = "2001:470:736b:621::2"
+	ipa2 = "2001:470:736b:621::3"
+	nfsk1 = "2001:470:736b:621::4"
+	zabbix1 = "2001:470:736b:621::5"
+	cliente1 = "2001:470:736b:622:5054:ff:fe06:2202"
+	cliente2 = "2001:470:736b:622:5054:ff:fe06:2203"
+	exec("cd /home/a715821/.u/despliegue/ && 
+	tar -xvf /home/a715821/.u/despliegue/despliegue.tar")
+	exec("cd /home/a715821/.u/despliegue/ && 
+	./routerInterno.sh")
+end
+
+args= ARGV
+
+if args.length == 0
+    puts "uso del comando: ./u p/s/d [command]"
+else
+    if args[0] == 'p'
+        procesar('', 'p', '')
+    elsif args[0] == 's'
+        procesar('', 's', args[1])
+    elsif args[0] == 'd'
+    	if args.length < 2
+    		puts "Necesito que pases un fichero tar para realizar el despliegue"
+    	else
+    		despliegue()
+    	end
+    elsif args[0] == 'c'
+        procesar('', 'c', args.drop(1))
+    else
+        if args.length > 1 and args[1] != 'c'
+            procesar(args[0], args[1], args[2])
+        elsif args.length >= 3 and args[1] == 'c'
+            procesar(args[0], args[1], args.drop(2))
+        else
+            puts "uso del comando: ./u p/s/d [command]"
+        end
+    end
+end
